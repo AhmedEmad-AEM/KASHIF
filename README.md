@@ -264,14 +264,12 @@ kashif
 
 ## 👥 Development Team
 
-KASHIF was developed by a specialized cybersecurity team:
-
-```
-🔹 AHMED EMAD          – Lead Developer & Architect
-🔹 MOHAMED NAGY        – Advanced Features Development
-🔹 ABDALLAH NEGEADA    – Testing & Performance Optimization
-🔹 ABDALLAH SALMAN     – Support & Documentation
-```
+| Name | Role |
+|:----:|:----:|
+| Ahmed Emad | Lead Developer |
+| Mohamed Nagy | Co-Developer |
+| Abdallah Negeada | Co-Developer |
+| Abdallah Salman | Co-Developer |
 
 ---
 
