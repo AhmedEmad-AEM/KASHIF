@@ -1,0 +1,318 @@
+#!/bin/bash
+# ===================================================================
+#  KASHIF – Advanced Password Revealer (Kali Edition)
+#  Team: AHMED EMAD | MOHAMED NAGY | ABDALLAH NEGEADA | ABDALLAH SALMAN
+#  Version 4.1
+#
+#  Dependencies: hashcat, hashid, jq
+#  Usage: ./kashif.sh
+# ===================================================================
+
+set -o pipefail
+
+# ── Colours ───────────────────────────────────────────────
+R='\033[0;31m'          G='\033[0;32m'          Y='\033[1;33m'
+B='\033[0;34m'          M='\033[0;35m'          C='\033[0;36m'
+W='\033[1;37m'          DIM='\033[2m'            BOLD='\033[1m'
+RESET='\033[0m'
+
+# ── Configuration ─────────────────────────────────────────
+HISTORY_FILE="$HOME/.kashif_cracked.json"
+WORDLIST_DIR="/usr/share/wordlists"
+DEFAULT_WORDLIST="$WORDLIST_DIR/rockyou.txt"
+HASHCAT=$(command -v hashcat)
+HASHID=$(command -v hashid)
+
+declare -A HASH_MODES=(
+    ["md5"]=0
+    ["sha1"]=100
+    ["sha256"]=1400
+    ["sha512"]=1700
+    ["ntlm"]=1000
+)
+
+# ── New Ultra‑Cool Logo ──────────────────────────────────
+show_splash() {
+    clear
+    echo -e "${Y}${BOLD}"
+    cat << "EOF"
+            _______________________________
+           |  ___________________________  |
+           | |                           | |
+           | |    ██╗  ██╗ █████╗ ███████╗██╗  ██╗██╗███████╗
+           | |    ██║ ██╔╝██╔══██╗██╔════╝██║  ██║██║██╔════╝
+           | |    █████╔╝ ███████║███████╗███████║██║█████╗
+           | |    ██╔═██╗ ██╔══██║╚════██║██╔══██║██║██╔══╝
+           | |    ██║  ██╗██║  ██║███████║██║  ██║██║██║
+           | |    ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝╚═╝
+           | |                           | |
+           | |___________________________| |
+           |_______________________________|
+    
+EOF
+    echo -e "${RESET}"
+    echo -e "${M}${BOLD}         The hash has no secrets anymore.${RESET}"
+    echo
+    echo -e "${G}${BOLD}  Developed by:${RESET}"
+    echo -e "    ${G}• AHMED EMAD${RESET}"
+    echo -e "    ${G}• MOHAMED NAGY${RESET}"
+    echo -e "    ${G}• ABDALLAH NEGEADA${RESET}"
+    echo -e "    ${G}• ABDALLAH SALMAN${RESET}"
+    echo
+    echo -e "  ${M}Version: 4.1${RESET}"
+    echo
+}
+
+# ── Dependencies check ────────────────────────────────────
+check_deps() {
+    local missing=()
+    [ -z "$HASHCAT" ] && missing+=("hashcat")
+    [ -z "$HASHID" ]  && missing+=("hashid")
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo -e "${R}[!] Missing: ${missing[*]}${RESET}"
+        echo -ne "${Y}Install now? [y/N]: ${RESET}"
+        read -r install_choice
+        if [[ "$install_choice" =~ ^[Yy]$ ]]; then
+            sudo apt update && sudo apt install -y hashcat hashid jq
+            HASHCAT=$(command -v hashcat)
+            HASHID=$(command -v hashid)
+        else
+            echo -e "${R}[!] Cannot continue without dependencies.${RESET}"
+            exit 1
+        fi
+    fi
+}
+
+# ── Hash mode detection ──────────────────────────────────
+detect_hash_mode() {
+    local hash_str="$1"
+    local mode=""
+    if [ -n "$HASHID" ]; then
+        mode=$(echo "$hash_str" | hashid -m 2>/dev/null | grep -oP 'Hashcat mode:\s*\K\d+' | head -n1)
+    fi
+    if [ -z "$mode" ]; then
+        local len=${#hash_str}
+        case $len in
+            32) mode="${HASH_MODES["md5"]}" ;;
+            40) mode="${HASH_MODES["sha1"]}" ;;
+            64) mode="${HASH_MODES["sha256"]}" ;;
+            128) mode="${HASH_MODES["sha512"]}" ;;
+        esac
+    fi
+    echo "$mode"
+}
+
+get_numeric_mode() {
+    local input="$1"
+    [[ "$input" =~ ^[0-9]+$ ]] && echo "$input" && return
+    local mapped="${HASH_MODES[$input]}"
+    [ -n "$mapped" ] && echo "$mapped" && return
+    read -p "  Enter Hashcat mode number: " user_mode
+    echo "$user_mode"
+}
+
+# ── Cracked password display ─────────────────────────────
+show_cracked() {
+    local pass="$1"
+    local hash="$2"
+    echo -e "\n${G}${BOLD}  ╔══════════════════════════════════════╗${RESET}"
+    echo -e "${G}${BOLD}  ║  🔓 PASSWORD REVEALED               ║${RESET}"
+    echo -e "${G}${BOLD}  ║  ${Y}$pass${G}${BOLD}  ║${RESET}"
+    echo -e "${G}${BOLD}  ╚══════════════════════════════════════╝${RESET}"
+    echo -e "${DIM}  (hash: ${hash:0:16}...)${RESET}"
+}
+
+# ── Save to history ──────────────────────────────────────
+save_cracked() {
+    local hash="$1" pass="$2" mode="$3"
+    local entry=$(jq -n --arg h "$hash" --arg p "$pass" --arg m "$mode" \
+        --arg t "$(date -Iseconds)" \
+        '{hash: $h, password: $p, mode: $m, timestamp: $t}')
+    [ ! -f "$HISTORY_FILE" ] && echo "[$entry]" > "$HISTORY_FILE" || \
+        jq ". += [$entry]" "$HISTORY_FILE" > tmp.json && mv tmp.json "$HISTORY_FILE"
+}
+
+view_history() {
+    echo -e "\n${C}── Cracked Passwords ─────────────────────${RESET}"
+    [ ! -f "$HISTORY_FILE" ] && echo -e "${DIM}  No records yet.${RESET}" && return
+    jq -r '.[] | "  \(.timestamp[:19])  \(.mode)\t\(.password)"' "$HISTORY_FILE"
+    echo
+}
+
+# ── 1. Dictionary Attack ─────────────────────────────────
+dict_attack() {
+    echo -e "\n${C}── Dictionary Attack ──────────────────────${RESET}"
+    read -p "  Target hash or hash file: " target
+    if [ -f "$target" ]; then
+        hash_file="$target"; sample_hash=$(head -1 "$target")
+    else
+        hash_file="/tmp/kashif_hash.txt"; echo "$target" > "$hash_file"
+        sample_hash="$target"; trap "rm -f $hash_file" EXIT
+    fi
+
+    read -p "  Wordlist path [$DEFAULT_WORDLIST]: " wordlist
+    wordlist="${wordlist:-$DEFAULT_WORDLIST}"
+    [ ! -f "$wordlist" ] && echo -e "${R}  ✖ Wordlist not found!${RESET}" && return
+
+    local detected_mode=$(detect_hash_mode "$sample_hash")
+    read -p "  Hashcat mode [$detected_mode]: " user_mode
+    local final_mode=$(get_numeric_mode "${user_mode:-$detected_mode}")
+
+    echo -e "${Y}  Running hashcat...${RESET}"
+    hashcat -m "$final_mode" -a 0 -o /tmp/kashif_result.txt "$hash_file" "$wordlist" --status --status-timer=1
+
+    if [ -s /tmp/kashif_result.txt ]; then
+        local cracked=$(cat /tmp/kashif_result.txt)
+        show_cracked "$cracked" "$sample_hash"
+        save_cracked "$sample_hash" "$cracked" "dict"
+    else
+        echo -e "${R}  ✖ Not found.${RESET}"
+    fi
+    rm -f /tmp/kashif_result.txt
+    echo
+}
+
+# ── 2. Mask Attack ───────────────────────────────────────
+mask_attack() {
+    echo -e "\n${C}── Mask (Brute-Force) Attack ─────────────${RESET}"
+    read -p "  Target hash or hash file: " target
+    if [ -f "$target" ]; then
+        hash_file="$target"; sample_hash=$(head -1 "$target")
+    else
+        hash_file="/tmp/kashif_hash.txt"; echo "$target" > "$hash_file"
+        sample_hash="$target"; trap "rm -f $hash_file" EXIT
+    fi
+
+    echo -e "\n  ${W}Mask setup:${RESET}"
+    echo "    [1] Custom mask (e.g., ?l?l?l?l?l?l?l?l)"
+    echo "    [2] Fixed‑length lowercase letters"
+    echo "    [3] Fixed‑length digits"
+    echo "    [4] Fixed‑length lowercase + digits"
+    echo "    [5] Fixed‑length all printable (?a)"
+    read -p "  Choose option [1-5]: " mask_opt
+
+    mask=""; custom_charset=""
+    case "$mask_opt" in
+        1) read -p "  Enter mask: " mask ;;
+        2) read -p "  Length: " len; mask=$(printf '?l%.0s' $(seq 1 $len)) ;;
+        3) read -p "  Length: " len; mask=$(printf '?d%.0s' $(seq 1 $len)) ;;
+        4) read -p "  Length: " len; custom_charset="-1 ?l?d"; mask=$(printf '?1%.0s' $(seq 1 $len)) ;;
+        5) read -p "  Length: " len; mask=$(printf '?a%.0s' $(seq 1 $len)) ;;
+        *) echo -e "${R}  Invalid choice.${RESET}"; return ;;
+    esac
+    [ -z "$mask" ] && echo -e "${R}  No mask provided.${RESET}" && return
+
+    echo -e "  Using mask: ${G}$mask${RESET}"
+
+    local detected_mode=$(detect_hash_mode "$sample_hash")
+    read -p "  Hashcat mode [$detected_mode]: " user_mode
+    local final_mode=$(get_numeric_mode "${user_mode:-$detected_mode}")
+
+    echo -e "${Y}  Running hashcat...${RESET}"
+    hashcat -m "$final_mode" -a 3 -o /tmp/kashif_result.txt $custom_charset "$hash_file" "$mask" --status --status-timer=1
+
+    if [ -s /tmp/kashif_result.txt ]; then
+        local cracked=$(cat /tmp/kashif_result.txt)
+        show_cracked "$cracked" "$sample_hash"
+        save_cracked "$sample_hash" "$cracked" "mask"
+    else
+        echo -e "${R}  ✖ Not found.${RESET}"
+    fi
+    rm -f /tmp/kashif_result.txt
+    echo
+}
+
+# ── 3. Rule-Based Attack ─────────────────────────────────
+rule_attack() {
+    echo -e "\n${C}── Rule-Based Attack ─────────────────────${RESET}"
+    read -p "  Target hash or hash file: " target
+    if [ -f "$target" ]; then
+        hash_file="$target"; sample_hash=$(head -1 "$target")
+    else
+        hash_file="/tmp/kashif_hash.txt"; echo "$target" > "$hash_file"
+        sample_hash="$target"; trap "rm -f $hash_file" EXIT
+    fi
+
+    read -p "  Wordlist path [$DEFAULT_WORDLIST]: " wordlist
+    wordlist="${wordlist:-$DEFAULT_WORDLIST}"
+    [ ! -f "$wordlist" ] && echo -e "${R}  ✖ Wordlist not found!${RESET}" && return
+
+    local rules_dir="/usr/share/hashcat/rules"
+    read -p "  Rule file (press Enter to browse): " rulefile
+    if [ -z "$rulefile" ]; then
+        echo -e "${Y}  Available rule files:${RESET}"
+        ls "$rules_dir"/*.rule 2>/dev/null | sed 's|.*/||' | column
+        read -p "  Enter rule filename: " rulefile
+    fi
+
+    if [ ! -f "$rulefile" ]; then
+        if [ -f "$rules_dir/$rulefile" ]; then
+            rulefile="$rules_dir/$rulefile"
+        else
+            echo -e "${R}  ✖ Rule file not found!${RESET}"; return
+        fi
+    fi
+
+    local detected_mode=$(detect_hash_mode "$sample_hash")
+    read -p "  Hashcat mode [$detected_mode]: " user_mode
+    local final_mode=$(get_numeric_mode "${user_mode:-$detected_mode}")
+
+    echo -e "${Y}  Running hashcat with rules...${RESET}"
+    hashcat -m "$final_mode" -a 0 -r "$rulefile" -o /tmp/kashif_result.txt "$hash_file" "$wordlist" --status --status-timer=1
+
+    if [ -s /tmp/kashif_result.txt ]; then
+        local cracked=$(cat /tmp/kashif_result.txt)
+        show_cracked "$cracked" "$sample_hash"
+        save_cracked "$sample_hash" "$cracked" "rule"
+    else
+        echo -e "${R}  ✖ Not found.${RESET}"
+    fi
+    rm -f /tmp/kashif_result.txt
+    echo
+}
+
+# ── Hash Identifier ──────────────────────────────────────
+hash_identifier() {
+    echo -e "\n${C}── Hash Identifier ──────────────────────${RESET}"
+    read -p "  Enter hash: " hash_str
+    echo -e "  ${G}$hash_str${RESET}"
+    if [ -n "$HASHID" ]; then
+        echo -e "${Y}  Hashid analysis:${RESET}"
+        echo "$hash_str" | hashid -m
+    else
+        local mode=$(detect_hash_mode "$hash_str")
+        echo -e "  ${G}Detected hashcat mode: ${mode:-unknown}${RESET}"
+    fi
+    echo
+}
+
+# ── Main Menu ──────────────────────────────────────────
+main_menu() {
+    while true; do
+        echo -e "${R}${BOLD}  ──  MAIN MENU  ──${RESET}"
+        echo -e "    ${W}[1]${RESET} 📚 Dictionary Attack"
+        echo -e "    ${W}[2]${RESET} 💪 Brute-Force (Mask) Attack"
+        echo -e "    ${W}[3]${RESET} 🧠 Rule-Based Attack"
+        echo -e "    ${W}[4]${RESET} 🔬 Hash Identifier"
+        echo -e "    ${W}[5]${RESET} 📂 View Cracked Passwords"
+        echo -e "    ${W}[0]${RESET} 👋 Exit"
+        echo
+        read -p "  » Choose an option: " choice
+
+        case $choice in
+            1) dict_attack ;;
+            2) mask_attack ;;
+            3) rule_attack ;;
+            4) hash_identifier ;;
+            5) view_history ;;
+            0) echo -e "\n${M}  Stay secure! Goodbye 👋${RESET}\n"; exit 0 ;;
+            *) echo -e "${R}  ✖ Invalid option.${RESET}" ;;
+        esac
+    done
+}
+
+# ── Entry Point ─────────────────────────────────────────
+show_splash
+check_deps
+main_menu
