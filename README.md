@@ -1,4 +1,6 @@
 # KASHIF
+<img width="1006" height="453" alt="Untitled design (6)" src="https://github.com/user-attachments/assets/98c3d1b3-b626-4f0b-b927-c68f036b87c8" />
+
 # 🔓 KASHIF – Advanced Password Cracking Toolkit
 
 **KASHIF** is a professional, menu‑driven password cracking tool built as a Bash script around `hashcat`. It simplifies hash identification, dictionary attacks, brute‑force (mask) attacks, rule‑based attacks, and cracked password history – all from a clean, colourful terminal interface.
